@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-multipart
+pandas
+pydantic
+pydantic-settings
+requests
+
+alembic
+geopy
+overpy
+pyproj
+shapely
+
+itsdangerous

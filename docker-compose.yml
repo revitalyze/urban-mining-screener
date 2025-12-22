@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ums_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-ums_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - ums_network
+    restart: unless-stopped
+
+  app:
+    container_name: ums_app
+    image: ums:local
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      - ENV=docker
+      - APP_PASSWORD=test
+      - AUTH_SECRET=testtest
+      - DB_PORT=5432
+      - DB_USER=user
+      - DB_PASSWORD=password
+      - DB_NAME=ums_db
+      - DB_HOST=ums_postgres
+    depends_on:
+      - postgres
+    networks:
+      - ums_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  app_storage:
+
+networks:
+  ums_network:
+    driver: bridge

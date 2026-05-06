@@ -1,4 +1,5 @@
 import overpy
+import requests
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderServiceError, GeocoderTimedOut
 from shapely.geometry import Polygon
@@ -10,7 +11,9 @@ from typing import Dict, Any, Optional
 class BuildingEstimationError(Exception):
     """Custom exception for building value estimation errors."""
 
-    pass
+    def __init__(self, message: str, status_code: int = 500):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def geocode_address(address: str) -> Dict[str, float]:
@@ -18,14 +21,53 @@ def geocode_address(address: str) -> Dict[str, float]:
     try:
         location = geolocator.geocode(address, timeout=10)
         if not location:
-            raise BuildingEstimationError(f"Address not found: {address}")
+            raise BuildingEstimationError(f"Address not found: {address}", status_code=404)
         return {"lat": location.latitude, "lon": location.longitude}
     except (GeocoderServiceError, GeocoderTimedOut) as e:
-        raise BuildingEstimationError(f"Geocoding failed: {str(e)}")
+        raise BuildingEstimationError(f"Geocoding failed: {str(e)}", status_code=502)
+
+
+def query_overpass(query: str) -> overpy.Result:
+    """
+    Execute an Overpass query with an explicit User-Agent.
+
+    Overpass rejects the default Python urllib user-agent with HTTP 406.
+    """
+    api = overpy.Overpass(url="https://overpass-api.de/api/interpreter")
+    headers = {
+        "User-Agent": "urban-mining-screener/1.0 (+https://ums-revitalyze.azurewebsites.net)",
+        "Accept": "application/osm3s+xml,application/json;q=0.9,*/*;q=0.8",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    }
+    try:
+        response = requests.post(
+            api.url,
+            data=query.encode("utf-8"),
+            headers=headers,
+            timeout=20,
+        )
+    except requests.RequestException as e:
+        raise BuildingEstimationError(f"OSM query failed: {str(e)}", status_code=502)
+
+    if response.status_code != 200:
+        raise BuildingEstimationError(
+            f"OSM query failed: Overpass returned status {response.status_code}",
+            status_code=502,
+        )
+
+    content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    if content_type == "application/json":
+        return api.parse_json(response.text)
+    if content_type == "application/osm3s+xml":
+        return api.parse_xml(response.text)
+
+    raise BuildingEstimationError(
+        f"OSM query failed: unexpected content type {content_type or 'unknown'}",
+        status_code=502,
+    )
 
 
 def fetch_building_from_osm(lat: float, lon: float) -> Dict[str, Any]:
-    api = overpy.Overpass()
     # Query for building polygons within 50m of the geocoded point
     query = f"""
     (
@@ -37,15 +79,17 @@ def fetch_building_from_osm(lat: float, lon: float) -> Dict[str, Any]:
     out skel qt;
     """
     try:
-        result = api.query(query)
+        result = query_overpass(query)
     except Exception as e:
-        raise BuildingEstimationError(f"OSM query failed: {str(e)}")
+        if isinstance(e, BuildingEstimationError):
+            raise
+        raise BuildingEstimationError(f"OSM query failed: {str(e)}", status_code=502)
 
     # Prefer ways, then relations
     buildings = result.ways + result.relations
     if not buildings:
         raise BuildingEstimationError(
-            "No building data found near the provided address."
+            "No building data found near the provided address.", status_code=404
         )
 
     # Find the building whose centroid is closest to the point
@@ -81,7 +125,7 @@ def fetch_building_from_osm(lat: float, lon: float) -> Dict[str, Any]:
 
     if not best_building or not best_geom:
         raise BuildingEstimationError(
-            "Could not extract building geometry from OSM data."
+            "Could not extract building geometry from OSM data.", status_code=404
         )
 
     return {

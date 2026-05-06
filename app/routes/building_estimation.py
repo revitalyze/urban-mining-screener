@@ -115,6 +115,21 @@ class BuildingEstimationResponse(BaseModel):
             },
         },
         500: {"description": "Internal server error"},
+        502: {
+            "description": "Upstream geospatial provider error",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "OverpassFailure": {
+                            "summary": "OSM upstream unavailable or rejected request",
+                            "value": {
+                                "detail": "OSM query failed: Overpass returned status 503"
+                            },
+                        }
+                    }
+                }
+            },
+        },
     },
     openapi_extra={
         "requestBody": {
@@ -154,7 +169,7 @@ def estimate_building_values_endpoint(request: BuildingEstimationRequest):
         return result
     except BuildingEstimationError as e:
         logger.warning(f"Building estimation error: {e}")
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e))
     except Exception as e:
         logger.exception("Unexpected error during building estimation")
         raise HTTPException(status_code=500, detail="Internal server error")
